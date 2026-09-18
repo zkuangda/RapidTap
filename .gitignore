@@ -1,0 +1,22 @@
+## .NET
+bin/
+obj/
+*.user
+*.suo
+
+## Visual Studio / Rider
+.vs/
+.idea/
+*.userosscache
+*.sln.docstates
+
+## Build results
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Ll]og/
+
+## Root-level built exe (published via `dotnet publish`, distributed through GitHub Releases instead)
+/RapidTap.exe
+/RapidTap.pdb
