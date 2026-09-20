@@ -20,6 +20,13 @@ namespace RapidTap
         private Label lblHint = null!;
         private System.Windows.Forms.Timer cpsTimer = null!;
 
+        // 相对窗体字体推导出来的两个派生字体，DPI 变化时会被重建（见 ApplyDerivedFonts）
+        private Font _statusFont = null!;
+        private Font _hintFont = null!;
+
+        // 根布局的引用，DPI 变化后要拿它重新测算窗口该多大（见 FitToContent）
+        private TableLayoutPanel _root = null!;
+
         // ========================= 连点相关状态 =========================
 
         // 鼠标按键类型
@@ -79,52 +86,70 @@ namespace RapidTap
             this.Text = "RapidTap";
             this.Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
 
-            // 按 96dpi 设计布局，交给 WinForms 按系统实际 DPI 等比缩放控件和字体，
-            // 避免在高 DPI 缩放（125%/150%等）下出现文字被固定像素大小的控件裁切的问题。
-            this.AutoScaleMode = AutoScaleMode.Dpi;
-            this.AutoScaleDimensions = new SizeF(96F, 96F);
+            // 按"字体"自动缩放：设计基准是 96dpi 下的默认 UI 字体（Segoe UI 9pt，平均字符约 7x15 像素）。
+            // 配合 Program.cs 里的 PerMonitorV2，系统缩放（125% / 150% / 175% …）变化、或窗口被拖到
+            // 另一块不同缩放的显示器上时，WinForms 会按新 DPI 的字体尺寸把整窗控件重新缩放并重排。
+            this.AutoScaleMode = AutoScaleMode.Font;
+            this.AutoScaleDimensions = new SizeF(7F, 15F);
 
+            // 窗口尺寸不写死 ClientSize，而是在 OnLoad 里按根布局的实测需求尺寸赋值（见 FitToContent）。
+            // 这里不用 Form.AutoSize：它对"Dock=Fill 的子布局"测不准，会把底部几行漏算掉导致裁切。
             this.FormBorderStyle = FormBorderStyle.FixedDialog;
             this.MaximizeBox = false;
             this.MinimizeBox = true;
-            this.StartPosition = FormStartPosition.CenterScreen;
-            this.ClientSize = new Size(420, 320);
+            // 起始位置在 OnLoad 里按"鼠标所在显示器的工作区"算，比 CenterScreen 更适合多屏 + 任务栏占位
+            this.StartPosition = FormStartPosition.Manual;
 
-            // 外层分两行：上面内容区占满剩余空间，下面固定高度放提示条
-            var outer = new TableLayoutPanel
+            _statusFont = MakeStatusFont(this.Font);
+            _hintFont = MakeHintFont(this.Font);
+
+            // ================= 根布局：单列纵向堆叠，每行高度按内容自适应 =================
+            _root = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill,
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
                 ColumnCount = 1,
-                RowCount = 2
+                RowCount = 4,
+                Padding = new Padding(16, 14, 16, 10)
             };
-            outer.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
-            outer.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            _root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+            for (int i = 0; i < 4; i++)
+            {
+                _root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            }
 
-            // 字段区用 3 行 x 3 列的表格布局，标签列/控件列都设为 AutoSize，
-            // 这样标签宽度会跟着实际文字和字体大小走，不会再出现固定像素宽度裁字的问题。
-            var fieldsTable = new TableLayoutPanel
+            // ================= 设置区：标签列 + 输入列 + 附加按钮列 =================
+            var grid = new TableLayoutPanel
             {
                 AutoSize = true,
                 AutoSizeMode = AutoSizeMode.GrowAndShrink,
                 ColumnCount = 3,
-                RowCount = 3,
+                RowCount = 4,
                 Margin = new Padding(0)
             };
-            fieldsTable.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-            fieldsTable.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-            fieldsTable.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            grid.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            grid.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            grid.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
 
+            // 标签只锚左边：TableLayoutPanel 会让它在单元格里自动垂直居中，
+            // 不需要手工写上边距去跟右侧输入控件对齐（手工边距一换字体 / DPI 就会错位）。
             static Label MakeCaption(string text) => new Label
             {
                 Text = text,
                 AutoSize = true,
-                Margin = new Padding(0, 13, 16, 0)
+                Anchor = AnchorStyles.Left,
+                Margin = new Padding(0, 0, 10, 0)
             };
+
+            var inputMargin = new Padding(0, 3, 0, 3);
+            const int InputWidth = 96;
 
             numInterval = new NumericUpDown
             {
-                Width = 100,
-                Margin = new Padding(0, 8, 0, 8),
+                Width = InputWidth,
+                Anchor = AnchorStyles.Left,
+                Margin = inputMargin,
                 Minimum = 0.1m,
                 Maximum = 1000m,
                 DecimalPlaces = 1,
@@ -135,8 +160,9 @@ namespace RapidTap
 
             cmbButton = new ComboBox
             {
-                Width = 100,
-                Margin = new Padding(0, 8, 0, 8),
+                Width = InputWidth,
+                Anchor = AnchorStyles.Left,
+                Margin = inputMargin,
                 DropDownStyle = ComboBoxStyle.DropDownList
             };
             cmbButton.Items.AddRange(new object[] { "左键", "右键", "中键" });
@@ -144,45 +170,67 @@ namespace RapidTap
 
             txtHotkey = new TextBox
             {
-                Width = 100,
-                Margin = new Padding(0, 8, 12, 8),
+                Width = InputWidth,
+                Anchor = AnchorStyles.Left,
+                Margin = inputMargin,
                 ReadOnly = true,
                 TextAlign = HorizontalAlignment.Center,
                 Text = GetKeyDisplayName(DefaultHotkey)
             };
 
+            // 按钮不写死 Size，改成按文字自适应 + 内边距：
+            // 这样"点击设置" / "请按键…"两种文案在任何缩放下都不会被按钮边框裁掉。
             btnSetHotkey = new Button
             {
                 Text = "点击设置",
-                Size = new Size(104, 27),
-                Margin = new Padding(0, 6, 0, 6)
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                Anchor = AnchorStyles.Left,
+                Padding = new Padding(10, 3, 10, 3),
+                Margin = new Padding(8, 3, 0, 3)
             };
             btnSetHotkey.Click += BtnSetHotkey_Click;
-
-            fieldsTable.Controls.Add(MakeCaption("点击间隔（毫秒）："), 0, 0);
-            fieldsTable.Controls.Add(numInterval, 1, 0);
-
-            fieldsTable.Controls.Add(MakeCaption("鼠标按键："), 0, 1);
-            fieldsTable.Controls.Add(cmbButton, 1, 1);
-
-            fieldsTable.Controls.Add(MakeCaption("触发热键："), 0, 2);
-            fieldsTable.Controls.Add(txtHotkey, 1, 2);
-            fieldsTable.Controls.Add(btnSetHotkey, 2, 2);
 
             chkTopMost = new CheckBox
             {
                 Text = "窗口置顶",
                 AutoSize = true,
-                Margin = new Padding(0, 20, 0, 4)
+                Anchor = AnchorStyles.Left,
+                Margin = new Padding(0, 8, 0, 0)
             };
             chkTopMost.CheckedChanged += ChkTopMost_CheckedChanged;
 
+            grid.Controls.Add(MakeCaption("点击间隔（毫秒）"), 0, 0);
+            grid.Controls.Add(numInterval, 1, 0);
+
+            grid.Controls.Add(MakeCaption("鼠标按键"), 0, 1);
+            grid.Controls.Add(cmbButton, 1, 1);
+
+            grid.Controls.Add(MakeCaption("触发热键"), 0, 2);
+            grid.Controls.Add(txtHotkey, 1, 2);
+            grid.Controls.Add(btnSetHotkey, 2, 2);
+
+            grid.Controls.Add(chkTopMost, 0, 3);
+            grid.SetColumnSpan(chkTopMost, 3);
+
+            // ================= 分隔线 =================
+            // 宽度给 1 是为了不让它撑大所在列；Anchor 左右会把它自动拉满整行宽度。
+            var divider = new Panel
+            {
+                Size = new Size(1, 1),
+                BackColor = SystemColors.ControlLight,
+                Anchor = AnchorStyles.Left | AnchorStyles.Right,
+                Margin = new Padding(0, 12, 0, 10)
+            };
+
+            // ================= 状态区：状态靠左、速度靠右，压成一行 =================
             lblStatus = new Label
             {
                 Text = "状态：就绪",
                 AutoSize = true,
-                Margin = new Padding(0, 16, 0, 4),
-                Font = new Font(this.Font.FontFamily, 10.5f, FontStyle.Bold),
+                Anchor = AnchorStyles.Left,
+                Margin = new Padding(0),
+                Font = _statusFont,
                 ForeColor = Color.SeaGreen
             };
 
@@ -190,35 +238,42 @@ namespace RapidTap
             {
                 Text = "速度：0 次/秒",
                 AutoSize = true,
-                Margin = new Padding(0, 2, 0, 0)
+                Anchor = AnchorStyles.Left,
+                Margin = new Padding(16, 0, 0, 0)
             };
 
-            var content = new FlowLayoutPanel
+            // 用 FlowLayoutPanel 横着排：它的需求尺寸能被外层 TableLayoutPanel 正确测出来，
+            // 而 Dock=Fill 的嵌套 TableLayoutPanel 在自适应行里会被算成 0 高，导致状态区被裁掉。
+            var statusRow = new FlowLayoutPanel
             {
-                Dock = DockStyle.Fill,
-                FlowDirection = FlowDirection.TopDown,
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                FlowDirection = FlowDirection.LeftToRight,
                 WrapContents = false,
-                Padding = new Padding(22, 20, 20, 10)
+                Anchor = AnchorStyles.Left,
+                Margin = new Padding(0)
             };
-            content.Controls.Add(fieldsTable);
-            content.Controls.Add(chkTopMost);
-            content.Controls.Add(lblStatus);
-            content.Controls.Add(lblCps);
+            statusRow.Controls.Add(lblStatus);
+            statusRow.Controls.Add(lblCps);
 
+            // ================= 底部提示 =================
+            // Anchor=None 让它在整行里自动水平居中，AutoSize 保证整句文字宽度被完整计入窗口宽度。
             lblHint = new Label
             {
                 Text = "按住热键开始连点，松开停止",
-                Dock = DockStyle.Fill,
-                TextAlign = ContentAlignment.MiddleCenter,
+                AutoSize = true,
+                Anchor = AnchorStyles.None,
                 ForeColor = Color.Gray,
-                Font = new Font(this.Font.FontFamily, 8.5f),
-                Padding = new Padding(0, 0, 0, 12)
+                Font = _hintFont,
+                Margin = new Padding(0, 12, 0, 0)
             };
 
-            outer.Controls.Add(content, 0, 0);
-            outer.Controls.Add(lblHint, 0, 1);
+            _root.Controls.Add(grid, 0, 0);
+            _root.Controls.Add(divider, 0, 1);
+            _root.Controls.Add(statusRow, 0, 2);
+            _root.Controls.Add(lblHint, 0, 3);
 
-            this.Controls.Add(outer);
+            this.Controls.Add(_root);
 
             // 控件建好、事件绑定完成后再赋初值，确保 ValueChanged/SelectedIndexChanged 会正常触发一次，
             // 把默认值同步进 _intervalTenthsMs / _mouseButton
@@ -231,6 +286,123 @@ namespace RapidTap
             cpsTimer.Start();
 
             this.ResumeLayout(true);
+        }
+
+        // ========================= DPI / 分辨率自适应 =========================
+
+        // 两个派生字体都相对窗体字体推导，DPI 变化后按新的窗体字体重推一遍即可保持相对字号不变
+        private static Font MakeStatusFont(Font baseFont) =>
+            new Font(baseFont.FontFamily, baseFont.Size + 1.5f, FontStyle.Bold);
+
+        private static Font MakeHintFont(Font baseFont) =>
+            new Font(baseFont.FontFamily, Math.Max(6f, baseFont.Size - 0.5f));
+
+        protected override void OnLoad(EventArgs e)
+        {
+            base.OnLoad(e);
+
+            // 此时窗口已按内容 + 当前 DPI 完成自适应，尺寸是最终值，可以据此摆位置
+            CenterOnActiveScreen();
+        }
+
+        /// <summary>
+        /// 系统缩放被改动、或窗口被拖到另一块不同缩放的显示器时触发。
+        /// WinForms（PerMonitorV2）已经自己把窗体和控件按新 DPI 缩放过一轮，这里只补它不管的两件事：
+        /// 重新推导那两个派生字体，以及把窗口重新约束回工作区内（放大后可能溢出屏幕）。
+        /// 放进 BeginInvoke 是为了等 WinForms 自己的缩放流程整体走完再动手，避免和它互相覆盖。
+        /// </summary>
+        protected override void OnDpiChanged(DpiChangedEventArgs e)
+        {
+            base.OnDpiChanged(e);
+
+            BeginInvoke(new Action(() =>
+            {
+                ApplyDerivedFonts();
+                ClampIntoWorkingArea();
+            }));
+        }
+
+        private void ApplyDerivedFonts()
+        {
+            Font oldStatus = _statusFont;
+            Font oldHint = _hintFont;
+
+            _statusFont = MakeStatusFont(this.Font);
+            _hintFont = MakeHintFont(this.Font);
+
+            lblStatus.Font = _statusFont;
+            lblHint.Font = _hintFont;
+
+            oldStatus.Dispose();
+            oldHint.Dispose();
+        }
+
+        /// <summary>
+        /// 分辨率自适应：把窗口摆到"鼠标所在显示器"的工作区正中。
+        /// 用工作区而不是整块屏幕，窗口就不会被任务栏压住；
+        /// 用鼠标所在屏幕而不是主屏，多显示器下才会开在用户正看着的那块屏上。
+        /// </summary>
+        private void CenterOnActiveScreen()
+        {
+            FitToContent();
+
+            Rectangle wa = Screen.FromPoint(Cursor.Position).WorkingArea;
+            ShrinkToFit(wa);
+
+            this.Location = new Point(
+                wa.X + Math.Max(0, (wa.Width - this.Width) / 2),
+                wa.Y + Math.Max(0, (wa.Height - this.Height) / 2));
+        }
+
+        /// <summary>
+        /// 把窗口约束回所在显示器的工作区：先裁尺寸再推位置，保证整个窗口始终完整可见。
+        /// </summary>
+        private void ClampIntoWorkingArea()
+        {
+            FitToContent();
+
+            Rectangle wa = Screen.FromControl(this).WorkingArea;
+            ShrinkToFit(wa);
+
+            int x = Math.Min(Math.Max(this.Left, wa.Left), wa.Right - this.Width);
+            int y = Math.Min(Math.Max(this.Top, wa.Top), wa.Bottom - this.Height);
+            if (x != this.Left || y != this.Top)
+            {
+                this.Location = new Point(x, y);
+            }
+        }
+
+        /// <summary>
+        /// 按当前 DPI / 字体下根布局的实测需求尺寸来定窗口大小。
+        /// 所有控件都是 AutoSize + 自适应行列，所以这个需求尺寸天然跟着缩放和字体走，
+        /// 既不会把文字裁掉、也不会让控件互相遮挡，同时不留多余空白。
+        /// </summary>
+        private void FitToContent()
+        {
+            _root.PerformLayout();
+
+            Size need = _root.GetPreferredSize(Size.Empty);
+            if (this.ClientSize != need)
+            {
+                this.ClientSize = need;
+            }
+        }
+
+        /// <summary>
+        /// 兜底：极低分辨率叠加极高缩放时，自适应算出来的窗口可能比工作区还大，这里裁到工作区大小。
+        /// 裁之前必须先关掉 AutoSize，否则刚写进去的 Size 会被自适应逻辑立刻改回去。
+        /// </summary>
+        private void ShrinkToFit(Rectangle workingArea)
+        {
+            int w = Math.Min(this.Width, workingArea.Width);
+            int h = Math.Min(this.Height, workingArea.Height);
+            if (w == this.Width && h == this.Height)
+            {
+                return;
+            }
+
+            this.AutoSize = false;
+            this.Size = new Size(w, h);
         }
 
         /// <summary>
