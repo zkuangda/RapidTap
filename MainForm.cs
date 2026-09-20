@@ -77,6 +77,7 @@ namespace RapidTap
             this.SuspendLayout();
 
             this.Text = "RapidTap";
+            this.Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
 
             // 按 96dpi 设计布局，交给 WinForms 按系统实际 DPI 等比缩放控件和字体，
             // 避免在高 DPI 缩放（125%/150%等）下出现文字被固定像素大小的控件裁切的问题。

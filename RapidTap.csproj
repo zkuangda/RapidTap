@@ -14,8 +14,11 @@
     <!-- 程序信息 -->
     <AssemblyTitle>RapidTap</AssemblyTitle>
     <Product>RapidTap</Product>
-    <Version>1.0.0</Version>
+    <Version>1.0.1</Version>
     <Company>RapidTap</Company>
+
+    <!-- 程序图标 -->
+    <ApplicationIcon>Assets\icon.ico</ApplicationIcon>
 
     <!-- 发布为单文件 exe 所需属性（配合发布命令中的 r 与 self contained 参数使用） -->
     <SelfContained>true</SelfContained>
