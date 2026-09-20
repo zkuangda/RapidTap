@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: 运行单元测试
+        run: dotnet test tests/RapidTap.Tests/RapidTap.Tests.csproj -c Release --nologo
+
+      - name: 构建
+        run: dotnet build RapidTap.csproj -c Release --nologo
+
+      - name: 确认产物是单个 exe
+        shell: pwsh
+        run: |
+          $files = Get-ChildItem bin/Release/net48 -File
+          $files | Format-Table Name, Length
+          if ($files.Count -ne 1 -or $files[0].Name -ne 'RapidTap.exe') {
+            throw "期望输出目录里只有 RapidTap.exe，实际有 $($files.Count) 个文件：$($files.Name -join ', ')"
+          }

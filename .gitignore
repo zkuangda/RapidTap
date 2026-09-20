@@ -13,6 +13,7 @@ obj/
 ## Build results
 [Dd]ebug/
 [Rr]elease/
+TestResults/
 x64/
 x86/
 [Ll]og/

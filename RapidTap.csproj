@@ -17,7 +17,7 @@
     <!-- 程序信息 -->
     <AssemblyTitle>RapidTap</AssemblyTitle>
     <Product>RapidTap</Product>
-    <Version>1.1.0</Version>
+    <Version>2.0.0</Version>
     <Company>RapidTap</Company>
 
     <!-- 程序图标 -->
@@ -33,6 +33,13 @@
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
     <GenerateSupportedRuntime>false</GenerateSupportedRuntime>
   </PropertyGroup>
+
+  <!-- 测试工程用"链接源文件"的方式引用主工程的源码，这里必须把 tests 目录排除，
+       否则 SDK 的默认通配符会把测试代码也编进 exe 里。 -->
+  <ItemGroup>
+    <Compile Remove="tests\**" />
+    <None Remove="tests\**" />
+  </ItemGroup>
 
   <!-- net48 的 SDK 工程需要显式引用这几个程序集（UseWindowsForms 只对 .NET Core 3.0+ 生效） -->
   <ItemGroup>

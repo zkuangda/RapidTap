@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- 测试项目面向 net8.0-windows 而不是 net48：xunit 的测试运行器在现代 TFM 上开箱即用。
+         被测代码是以"链接源文件"的方式引进来的（见下方 Compile Include），
+         所以这些文件必须同时能在 net48 和 net8.0 下编译——这正好也是一道约束检查。 -->
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>RapidTap.Tests</RootNamespace>
+  </PropertyGroup>
+
+  <!-- 直接链接主工程里那几个不依赖窗体的源文件。
+       不用 ProjectReference：主工程是 net48 且产出 WinExe，引过来会把整个 WinForms 窗体
+       和全局钩子一并拖进测试进程，得不偿失。 -->
+  <ItemGroup>
+    <Compile Include="..\..\ClickTiming.cs" Link="ClickTiming.cs" />
+    <Compile Include="..\..\ClickEngine.cs" Link="ClickEngine.cs" />
+    <Compile Include="..\..\HotkeyBinding.cs" Link="HotkeyBinding.cs" />
+    <Compile Include="..\..\AppSettings.cs" Link="AppSettings.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+  </ItemGroup>
+
+</Project>

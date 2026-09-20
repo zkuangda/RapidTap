@@ -1,0 +1,102 @@
+name: Release
+
+# 打 v* 标签即自动构建、测试、出 Release。
+# 手工流程（build → 复制 exe → gh release create）漏过步骤，比如忘了同步根目录的 exe。
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '要发布的标签（例如 v2.0.0）'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: 还原依赖
+        run: |
+          dotnet restore RapidTap.csproj
+          dotnet restore tests/RapidTap.Tests/RapidTap.Tests.csproj
+
+      - name: 运行单元测试
+        run: dotnet test tests/RapidTap.Tests/RapidTap.Tests.csproj -c Release --nologo
+
+      - name: 构建
+        run: dotnet build RapidTap.csproj -c Release --nologo
+
+      - name: 确认产物是单个 exe
+        shell: pwsh
+        run: |
+          $files = Get-ChildItem bin/Release/net48 -File
+          $files | Format-Table Name, Length
+          if ($files.Count -ne 1 -or $files[0].Name -ne 'RapidTap.exe') {
+            throw "期望输出目录里只有 RapidTap.exe，实际有 $($files.Count) 个文件：$($files.Name -join ', ')"
+          }
+          Copy-Item bin/Release/net48/RapidTap.exe RapidTap.exe
+
+      - name: 计算 SHA256
+        shell: pwsh
+        id: hash
+        run: |
+          $h = (Get-FileHash RapidTap.exe -Algorithm SHA256).Hash.ToLower()
+          $kb = [math]::Round((Get-Item RapidTap.exe).Length / 1KB, 1)
+          "sha256=$h" >> $env:GITHUB_OUTPUT
+          "size=$kb" >> $env:GITHUB_OUTPUT
+          "RapidTap.exe  $h" | Out-File -FilePath SHA256SUMS.txt -Encoding ascii
+
+      - name: 解析标签名
+        shell: pwsh
+        id: tag
+        run: |
+          $t = if ('${{ github.event_name }}' -eq 'workflow_dispatch') { '${{ inputs.tag }}' }
+               else { '${{ github.ref_name }}' }
+          "name=$t" >> $env:GITHUB_OUTPUT
+
+      # 用 GitHub 预装的 gh CLI，不引第三方 action，少一条供应链
+      - name: 创建或更新 Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = '${{ steps.tag.outputs.name }}'
+          $notes = @"
+          ## 下载
+
+          下载下方的 ``RapidTap.exe``，双击运行即可，无需安装。
+          首次运行如被 SmartScreen 拦截，点击「更多信息」→「仍要运行」。
+
+          ## 校验
+
+          本程序未做代码签名，可用下面的校验值确认文件未被篡改：
+
+          ``````
+          SHA256  ${{ steps.hash.outputs.sha256 }}
+          大小    ${{ steps.hash.outputs.size }} KB
+          ``````
+
+          PowerShell 里执行 ``Get-FileHash RapidTap.exe -Algorithm SHA256`` 即可比对。
+
+          ---
+
+          由 [release.yml](../../blob/master/.github/workflows/release.yml) 自动构建于提交 ``${{ github.sha }}``。
+          "@
+
+          if (gh release view $tag 2>$null) {
+            gh release upload $tag RapidTap.exe SHA256SUMS.txt --clobber
+          } else {
+            gh release create $tag RapidTap.exe SHA256SUMS.txt --title "RapidTap $tag" --notes $notes
+          }
