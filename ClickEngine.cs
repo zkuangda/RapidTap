@@ -168,6 +168,9 @@ namespace RapidTap
             var safetyClock = Stopwatch.StartNew();
             double lastSafetyCheckMs = 0;
 
+            // 上一圈处理的是哪一轮连点，用来识别"这是新一轮的第一圈"
+            int lastEpoch = 0;
+
             while (true)
             {
                 int epoch;
@@ -186,6 +189,20 @@ namespace RapidTap
                     }
 
                     epoch = _epoch;
+                }
+
+                if (epoch != lastEpoch)
+                {
+                    // 新一轮连点：兜底计时从此刻重新起算，把第一次检查推到 50ms 之后。
+                    // 热键刚按下的那一瞬间是问不得"键还按着吗"的：低级键盘钩子跑在系统更新
+                    // 按键状态之前，钩子里（以及被它唤醒的本线程里）GetAsyncKeyState 仍然返回
+                    // "松开"，实测约 2ms 后才翻成"按下"。而 lastSafetyCheckMs 是跨轮次的，
+                    // 隔一会儿再按热键必然超过 50ms 节流窗口，于是新一轮的第一圈就去做检查，
+                    // 一查一个准地把自己否掉——一下没点就停，用户要等键盘自动重复（约半秒）
+                    // 补发的 KEYDOWN 才真的开始连点，表现为"按下去不马上点"。
+                    // 兜底本就是"连点期间周期性确认手还按着"，第一圈不归它管。
+                    lastEpoch = epoch;
+                    lastSafetyCheckMs = safetyClock.Elapsed.TotalMilliseconds;
                 }
 
                 // 兜底检查和点击都是外部注入的委托，绝不能持锁调用：

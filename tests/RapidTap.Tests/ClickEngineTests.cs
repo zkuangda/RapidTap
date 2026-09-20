@@ -229,6 +229,68 @@ namespace RapidTap.Tests
                 $"重启后第二下用了 {sw.ElapsedMilliseconds}ms，说明延时没有被 Stop 打断");
         }
 
+        /// <summary>
+        /// 回归："按下热键后要等半秒才开始点"。
+        ///
+        /// 低级键盘钩子跑在系统更新按键状态之前——钩子里（以及被它唤醒的连点线程里）
+        /// GetAsyncKeyState 对刚按下的那个键仍然返回"松开"，实测约 2ms 后才翻成"按下"。
+        /// 兜底检查的节流时刻是跨轮次保留的，隔一会儿再按热键必然已超过 50ms 节流窗口，
+        /// 于是新一轮的第一圈就去做检查，一查一个准地把整轮连点否掉，一下都没点就停了；
+        /// 用户要等键盘自动重复补发的 KEYDOWN 才真的开始连点。
+        ///
+        /// 所以这里必须连按多次：第一次按下时兜底计时恰好是从零起算的，反而不会出问题，
+        /// 只测第一次是测不出这个缺陷的。
+        /// </summary>
+        [Fact]
+        public void 热键刚按下时兜底检查不应否掉新一轮连点()
+        {
+            int count = 0;
+            long pressedAtTicks = 0;
+            bool held = false;
+            int safetyStops = 0;
+
+            // 模拟 GetAsyncKeyState：手一直按着，但按下后 2ms 内系统仍报"松开"
+            Func<bool> keyStateSaysHeld = () =>
+            {
+                if (!Volatile.Read(ref held))
+                {
+                    return false;
+                }
+
+                long since = System.Diagnostics.Stopwatch.GetTimestamp() - Interlocked.Read(ref pressedAtTicks);
+                return since * 1000.0 / System.Diagnostics.Stopwatch.Frequency >= 2.0;
+            };
+
+            var engine = new ClickEngine(() => Interlocked.Increment(ref count), keyStateSaysHeld);
+            engine.StoppedBySafetyCheck += (s, e) => Interlocked.Increment(ref safetyStops);
+            engine.IntervalMs = 2m;
+
+            for (int press = 1; press <= 3; press++)
+            {
+                Interlocked.Exchange(ref pressedAtTicks, System.Diagnostics.Stopwatch.GetTimestamp());
+                Volatile.Write(ref held, true);
+                Interlocked.Exchange(ref count, 0);
+
+                engine.Start();
+                WaitUntil(() => Volatile.Read(ref count) >= 1, 500);
+
+                int clicked = Volatile.Read(ref count);
+                int stops = Volatile.Read(ref safetyStops);
+
+                engine.Stop();
+                Volatile.Write(ref held, false);
+
+                Assert.True(clicked >= 1,
+                    $"第 {press} 次按下热键后一下都没点出来（兜底自停 {stops} 次）");
+                Assert.Equal(0, stops);
+
+                // 两次按键之间拉开距离，超过兜底检查那 50ms 的节流窗口
+                Thread.Sleep(80);
+            }
+
+            engine.StopAndJoin(1000);
+        }
+
         private static void WaitUntil(Func<bool> condition, int timeoutMs)
         {
             var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
