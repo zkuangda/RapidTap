@@ -27,6 +27,12 @@ namespace RapidTap
         // 根布局的引用，DPI 变化后要拿它重新测算窗口该多大（见 FitToContent）
         private TableLayoutPanel _root = null!;
 
+        // 当前窗口所在显示器的 DPI，用来算 WM_DPICHANGED 前后的缩放比例
+        private int _currentDpi = 96;
+
+        // 热键框的基准宽度：按常见键名里最长的那个实测得出，避免"PageDown"被裁成"PageDowr"
+        private int _hotkeyFieldWidth;
+
         // ========================= 连点相关状态 =========================
 
         // 鼠标按键类型
@@ -87,8 +93,9 @@ namespace RapidTap
             this.Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
 
             // 按"字体"自动缩放：设计基准是 96dpi 下的默认 UI 字体（Segoe UI 9pt，平均字符约 7x15 像素）。
-            // 配合 Program.cs 里的 PerMonitorV2，系统缩放（125% / 150% / 175% …）变化、或窗口被拖到
-            // 另一块不同缩放的显示器上时，WinForms 会按新 DPI 的字体尺寸把整窗控件重新缩放并重排。
+            // 进程已在 app.manifest 里声明 PerMonitorV2，所以系统字体（SystemFonts.MessageBoxFont）
+            // 拿到的像素尺寸本身就带着当前缩放，AutoScaleMode.Font 据此把整窗控件按比例放大，
+            // 启动时的 125% / 150% / 175% 缩放无需任何额外代码即可正确排版。
             this.AutoScaleMode = AutoScaleMode.Font;
             this.AutoScaleDimensions = new SizeF(7F, 15F);
 
@@ -100,13 +107,19 @@ namespace RapidTap
             // 起始位置在 OnLoad 里按"鼠标所在显示器的工作区"算，比 CenterScreen 更适合多屏 + 任务栏占位
             this.StartPosition = FormStartPosition.Manual;
 
+            // .NET Framework 在中文系统上的默认控件字体是"宋体"（.NET Core 用的是 Segoe UI），
+            // 点阵渲染、观感陈旧。这里显式改用系统 UI 字体（Win10/11 中文环境为 Microsoft YaHei UI）。
+            this.Font = SystemFonts.MessageBoxFont;
+
             _statusFont = MakeStatusFont(this.Font);
             _hintFont = MakeHintFont(this.Font);
 
             // ================= 根布局：单列纵向堆叠，每行高度按内容自适应 =================
             _root = new TableLayoutPanel
             {
-                Dock = DockStyle.Fill,
+                // 不用 Dock=Fill：一旦 Dock，尺寸就由窗体反过来决定，测不出内容到底要多大。
+                // 让它自己 AutoSize，算完之后它的 Size 就是内容的真实尺寸，窗体照抄即可。
+                Location = new Point(0, 0),
                 AutoSize = true,
                 AutoSizeMode = AutoSizeMode.GrowAndShrink,
                 ColumnCount = 1,
@@ -142,13 +155,28 @@ namespace RapidTap
                 Margin = new Padding(0, 0, 10, 0)
             };
 
+            // 三个输入控件都 Left|Right 锚定：它们同处一个自适应列，列宽取三者最大值，
+            // 拉伸后右边缘自然对齐，不会出现长短不一的参差。
+            const AnchorStyles InputAnchor = AnchorStyles.Left | AnchorStyles.Right;
             var inputMargin = new Padding(0, 3, 0, 3);
             const int InputWidth = 96;
+
+            // 热键框按实际字体测量最长的常见键名来定宽，而不是拍一个固定像素值：
+            // 换字体、换 DPI、换键都不会把文字裁掉。
+            _hotkeyFieldWidth = InputWidth;
+            foreach (string sample in new[] { "PageDown", "PrintScreen", "ScrollLock", "Backspace" })
+            {
+                int w = TextRenderer.MeasureText(sample, this.Font).Width + 16;
+                if (w > _hotkeyFieldWidth)
+                {
+                    _hotkeyFieldWidth = w;
+                }
+            }
 
             numInterval = new NumericUpDown
             {
                 Width = InputWidth,
-                Anchor = AnchorStyles.Left,
+                Anchor = InputAnchor,
                 Margin = inputMargin,
                 Minimum = 0.1m,
                 Maximum = 1000m,
@@ -161,7 +189,7 @@ namespace RapidTap
             cmbButton = new ComboBox
             {
                 Width = InputWidth,
-                Anchor = AnchorStyles.Left,
+                Anchor = InputAnchor,
                 Margin = inputMargin,
                 DropDownStyle = ComboBoxStyle.DropDownList
             };
@@ -170,8 +198,8 @@ namespace RapidTap
 
             txtHotkey = new TextBox
             {
-                Width = InputWidth,
-                Anchor = AnchorStyles.Left,
+                Width = _hotkeyFieldWidth,
+                Anchor = InputAnchor,
                 Margin = inputMargin,
                 ReadOnly = true,
                 TextAlign = HorizontalAlignment.Center,
@@ -291,6 +319,7 @@ namespace RapidTap
         // ========================= DPI / 分辨率自适应 =========================
 
         // 两个派生字体都相对窗体字体推导，DPI 变化后按新的窗体字体重推一遍即可保持相对字号不变
+        // （Scale 之后 this.Font 已经是新 DPI 下的字号，所以这里直接拿它当基准）
         private static Font MakeStatusFont(Font baseFont) =>
             new Font(baseFont.FontFamily, baseFont.Size + 1.5f, FontStyle.Bold);
 
@@ -301,25 +330,52 @@ namespace RapidTap
         {
             base.OnLoad(e);
 
+            _currentDpi = GetDpiForWindowSafe();
+
             // 此时窗口已按内容 + 当前 DPI 完成自适应，尺寸是最终值，可以据此摆位置
             CenterOnActiveScreen();
         }
 
-        /// <summary>
-        /// 系统缩放被改动、或窗口被拖到另一块不同缩放的显示器时触发。
-        /// WinForms（PerMonitorV2）已经自己把窗体和控件按新 DPI 缩放过一轮，这里只补它不管的两件事：
-        /// 重新推导那两个派生字体，以及把窗口重新约束回工作区内（放大后可能溢出屏幕）。
-        /// 放进 BeginInvoke 是为了等 WinForms 自己的缩放流程整体走完再动手，避免和它互相覆盖。
-        /// </summary>
-        protected override void OnDpiChanged(DpiChangedEventArgs e)
-        {
-            base.OnDpiChanged(e);
+        private const int WM_DPICHANGED = 0x02E0;
 
-            BeginInvoke(new Action(() =>
+        /// <summary>
+        /// 系统缩放被改动、或窗口被拖到另一块不同缩放的显示器时，系统发来 WM_DPICHANGED。
+        /// .NET Framework 4.8 的 WinForms 不会自动响应它（那套自动重排要靠 app.config 里的
+        /// DpiAwareness 开关，而我们为了保持"单个 exe"没有带 config 文件），所以这里自己处理：
+        /// 按新旧 DPI 的比例缩放整棵控件树，再重新推导派生字体并重新测算窗口尺寸。
+        /// wParam 低 16 位是新 DPI，lParam 指向系统建议的新窗口矩形。
+        /// </summary>
+        protected override void WndProc(ref Message m)
+        {
+            if (m.Msg == WM_DPICHANGED)
             {
-                ApplyDerivedFonts();
-                ClampIntoWorkingArea();
-            }));
+                int newDpi = m.WParam.ToInt32() & 0xFFFF;
+                HandleDpiChanged(newDpi);
+            }
+
+            base.WndProc(ref m);
+        }
+
+        private void HandleDpiChanged(int newDpi)
+        {
+            if (newDpi <= 0 || newDpi == _currentDpi)
+            {
+                return;
+            }
+
+            float ratio = newDpi / (float)_currentDpi;
+            _currentDpi = newDpi;
+
+            this.SuspendLayout();
+
+            // Scale 会把整棵控件树的尺寸、位置、内外边距按比例缩放；
+            // AutoSize 的控件随后会按新字体重新测量，固定宽度的输入框则靠这一步跟上缩放。
+            this.Scale(new SizeF(ratio, ratio));
+            ApplyDerivedFonts();
+
+            this.ResumeLayout(true);
+
+            ClampIntoWorkingArea();
         }
 
         private void ApplyDerivedFonts()
@@ -335,6 +391,34 @@ namespace RapidTap
 
             oldStatus.Dispose();
             oldHint.Dispose();
+        }
+
+        /// <summary>
+        /// 取当前窗口所在显示器的 DPI。GetDpiForWindow 是 Win10 1607+ 才有的 API，
+        /// 更早的系统上回退到桌面 DC 的全局 DPI（那些系统本来也没有按显示器分别缩放的能力）。
+        /// </summary>
+        private int GetDpiForWindowSafe()
+        {
+            try
+            {
+                int dpi = GetDpiForWindow(this.Handle);
+                if (dpi > 0)
+                {
+                    return dpi;
+                }
+            }
+            catch (EntryPointNotFoundException)
+            {
+                // 旧系统没有这个导出，走下面的回退分支
+            }
+            catch (DllNotFoundException)
+            {
+            }
+
+            using (Graphics g = this.CreateGraphics())
+            {
+                return (int)Math.Round(g.DpiX);
+            }
         }
 
         /// <summary>
@@ -379,9 +463,12 @@ namespace RapidTap
         /// </summary>
         private void FitToContent()
         {
+            // 先让根表格按当前字体 / DPI 把自己撑到该有的大小，再把窗体客户区对齐过去。
+            // 不用 GetPreferredSize：它在这种"表格套表格"的结构上只会算出第一个子表格的尺寸，
+            // 连 Padding 都漏掉，结果就是按钮和下半部分被裁掉。
             _root.PerformLayout();
 
-            Size need = _root.GetPreferredSize(Size.Empty);
+            Size need = _root.Size;
             if (this.ClientSize != need)
             {
                 this.ClientSize = need;
@@ -678,7 +765,28 @@ namespace RapidTap
             _hotkey = key;
             _capturingHotkey = false;
             btnSetHotkey.Text = "点击设置";
-            txtHotkey.Text = GetKeyDisplayName(key);
+            SetHotkeyDisplay(GetKeyDisplayName(key));
+        }
+
+        /// <summary>
+        /// 显示热键名。基准宽度已经覆盖了常见键名，这里再兜一层：
+        /// 万一用户设了个更长的冷门键（比如 BrowserFavorites），就把框撑开并重新测算窗口，
+        /// 保证任何键名都不会被裁掉。
+        /// </summary>
+        private void SetHotkeyDisplay(string text)
+        {
+            txtHotkey.Text = text;
+
+            int need = TextRenderer.MeasureText(text, txtHotkey.Font).Width + 16;
+            int want = Math.Max(_hotkeyFieldWidth, need);
+            if (txtHotkey.Width != want)
+            {
+                txtHotkey.Width = want;
+                if (this.IsHandleCreated)
+                {
+                    FitToContent();
+                }
+            }
         }
 
         // ========================= 窗体关闭：完全退出 =========================
@@ -711,6 +819,9 @@ namespace RapidTap
 
         [DllImport("user32.dll", SetLastError = true)]
         private static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
+
+        [DllImport("user32.dll")]
+        private static extern int GetDpiForWindow(IntPtr hwnd);
 
         [DllImport("winmm.dll", SetLastError = true)]
         private static extern uint timeBeginPeriod(uint uPeriod);

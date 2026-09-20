@@ -2,10 +2,13 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net8.0-windows</TargetFramework>
+
+    <!-- .NET Framework 4.8：Win10 1903+ / Win11 系统自带，用户无需安装任何运行时。
+         相比自包含的 net8.0-windows（要把 69MB 运行时塞进 exe），这里产物只有几十 KB。 -->
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>disable</ImplicitUsings>
 
     <!-- 程序集 / exe 名称：最终生成 RapidTap.exe -->
     <AssemblyName>RapidTap</AssemblyName>
@@ -14,19 +17,29 @@
     <!-- 程序信息 -->
     <AssemblyTitle>RapidTap</AssemblyTitle>
     <Product>RapidTap</Product>
-    <Version>1.0.2</Version>
+    <Version>1.1.0</Version>
     <Company>RapidTap</Company>
 
     <!-- 程序图标 -->
     <ApplicationIcon>Assets\icon.ico</ApplicationIcon>
 
-    <!-- 发布为单文件 exe 所需属性（配合发布命令中的 r 与 self contained 参数使用） -->
-    <SelfContained>true</SelfContained>
-    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
-    <PublishSingleFile>true</PublishSingleFile>
-    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
-    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
-    <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- DPI 感知写在清单里（编译进 exe），不需要额外的 RapidTap.exe.config，保证发布物是单个 exe -->
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+
+    <!-- 不生成 pdb / 卫星资源 / app.config，发布目录里就只有一个 exe。
+         GenerateSupportedRuntime=false 去掉那个只写了 supportedRuntime 的 RapidTap.exe.config：
+         4.x 的 CLR 没有它也会正常加载，而 4.8 本身是 Win10 1903+ / Win11 自带的。 -->
+    <DebugType>none</DebugType>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <GenerateSupportedRuntime>false</GenerateSupportedRuntime>
   </PropertyGroup>
+
+  <!-- net48 的 SDK 工程需要显式引用这几个程序集（UseWindowsForms 只对 .NET Core 3.0+ 生效） -->
+  <ItemGroup>
+    <Reference Include="System" />
+    <Reference Include="System.Core" />
+    <Reference Include="System.Drawing" />
+    <Reference Include="System.Windows.Forms" />
+  </ItemGroup>
 
 </Project>

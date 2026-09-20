@@ -8,10 +8,9 @@ namespace RapidTap
         [STAThread]
         private static void Main()
         {
-            // 手写启动逻辑，不依赖 SDK 自动生成的 ApplicationConfiguration
-            // PerMonitorV2：窗口跨到不同缩放的显示器、或用户中途改系统缩放时，
-            // 由 WinForms 按新 DPI 真正重算控件尺寸和字体，而不是像 SystemAware 那样让系统拉伸位图（会糊）。
-            Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
+            // 注意：这里没有 Application.SetHighDpiMode —— 那是 .NET Core 3.0+ 才有的 API。
+            // .NET Framework 4.8 的 DPI 感知只能在清单里声明，见 app.manifest 的 PerMonitorV2，
+            // 它在进程启动前就生效，比任何代码调用都早，也更可靠。
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
             Application.Run(new MainForm());
