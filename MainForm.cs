@@ -197,8 +197,8 @@ namespace RapidTap
                 Margin = inputMargin,
                 Minimum = ClickTiming.MinIntervalMs,
                 Maximum = ClickTiming.MaxIntervalMs,
-                DecimalPlaces = 1,
-                Increment = 0.1m,
+                DecimalPlaces = 0,
+                Increment = ClickTiming.AdjustStep,
                 TextAlign = HorizontalAlignment.Center
             };
             numInterval.ValueChanged += NumInterval_ValueChanged;
@@ -212,8 +212,8 @@ namespace RapidTap
                 Margin = inputMargin,
                 Minimum = ClickTiming.MinCps,
                 Maximum = ClickTiming.MaxCps,
-                DecimalPlaces = 1,
-                Increment = 1m,
+                DecimalPlaces = 0,
+                Increment = ClickTiming.AdjustStep,
                 TextAlign = HorizontalAlignment.Center
             };
             numCps.ValueChanged += NumCps_ValueChanged;
@@ -410,7 +410,7 @@ namespace RapidTap
         /// <summary>把读进来的设置灌进控件。期间各控件会触发 Changed 事件，正好完成到字段的同步。</summary>
         private void ApplySettingsToUi()
         {
-            numInterval.Value = ClickTiming.ClampInterval(_settings.IntervalMs);
+            numInterval.Value = ClickTiming.RoundInterval(_settings.IntervalMs);
             cmbButton.SelectedIndex = _settings.MouseButtonIndex;
             cmbTrigger.SelectedIndex = _settings.Trigger == TriggerMode.Toggle ? 1 : 0;
             chkTopMost.Checked = _settings.TopMost;
@@ -439,6 +439,15 @@ namespace RapidTap
 
         private void NumInterval_ValueChanged(object? sender, EventArgs e)
         {
+            // 手打进来的小数（比如 7.5）控件只按整数显示，值本身却还留着小数位，
+            // 先归整再往下走，免得界面显示的和存进配置里的对不上。
+            decimal rounded = ClickTiming.RoundInterval(numInterval.Value);
+            if (rounded != numInterval.Value)
+            {
+                numInterval.Value = rounded;
+                return;
+            }
+
             _engine.IntervalMs = numInterval.Value;
 
             if (_syncingIntervalCps)
@@ -459,6 +468,13 @@ namespace RapidTap
 
         private void NumCps_ValueChanged(object? sender, EventArgs e)
         {
+            decimal rounded = ClickTiming.RoundCps(numCps.Value);
+            if (rounded != numCps.Value)
+            {
+                numCps.Value = rounded;
+                return;
+            }
+
             if (_syncingIntervalCps)
             {
                 return;
@@ -554,7 +570,7 @@ namespace RapidTap
             _lastClickCountForCps = current;
 
             double cps = ClickTiming.ComputeCps(delta, cpsTimer.Interval / 1000.0);
-            lblCps.Text = $"速度：{cps:0.#} 次/秒";
+            lblCps.Text = $"速度：{cps:0} 次/秒";
         }
 
         // ========================= 连点控制 =========================

@@ -7,7 +7,7 @@ namespace RapidTap.Tests
     {
         [Theory]
         [InlineData(15.0, 150)]
-        [InlineData(0.1, 1)]
+        [InlineData(1.0, 10)]
         [InlineData(1000.0, 10000)]
         [InlineData(2.5, 25)]
         public void ToTenths_把毫秒换成十分之一毫秒的整数(double intervalMs, int expected)
@@ -18,7 +18,7 @@ namespace RapidTap.Tests
         [Fact]
         public void ToTenths_会先把超范围的值夹回区间()
         {
-            Assert.Equal(1, ClickTiming.ToTenths(0.001m));
+            Assert.Equal(10, ClickTiming.ToTenths(0.001m));
             Assert.Equal(10000, ClickTiming.ToTenths(99999m));
         }
 
@@ -31,10 +31,10 @@ namespace RapidTap.Tests
         }
 
         [Theory]
-        [InlineData(0.1, 0.1)]
+        [InlineData(1.0, 1.0)]
         [InlineData(15.0, 15.0)]
         [InlineData(1000.0, 1000.0)]
-        [InlineData(-5.0, 0.1)]
+        [InlineData(-5.0, 1.0)]
         [InlineData(5000.0, 1000.0)]
         public void ClampInterval_把值夹进合法区间(double input, double expected)
         {
@@ -44,7 +44,8 @@ namespace RapidTap.Tests
         [Theory]
         [InlineData(10.0, 100.0)]
         [InlineData(1000.0, 1.0)]
-        [InlineData(0.1, 10000.0)]
+        [InlineData(1.0, 1000.0)]
+        [InlineData(15.0, 67.0)]
         public void IntervalToCps_按每秒次数换算(double intervalMs, double expectedCps)
         {
             Assert.Equal((decimal)expectedCps, ClickTiming.IntervalToCps((decimal)intervalMs));
@@ -53,7 +54,8 @@ namespace RapidTap.Tests
         [Theory]
         [InlineData(100.0, 10.0)]
         [InlineData(1.0, 1000.0)]
-        [InlineData(10000.0, 0.1)]
+        [InlineData(5000.0, 1.0)]
+        [InlineData(67.0, 15.0)]
         public void CpsToInterval_按间隔换算(double cps, double expectedInterval)
         {
             Assert.Equal((decimal)expectedInterval, ClickTiming.CpsToInterval((decimal)cps));
@@ -63,7 +65,7 @@ namespace RapidTap.Tests
         public void 间隔与速度来回换算不会漂移()
         {
             // 界面上两个输入框是双向联动的，来回换算若不稳定就会自己抖起来
-            foreach (decimal interval in new[] { 0.1m, 1m, 2m, 10m, 15m, 50m, 100m, 1000m })
+            foreach (decimal interval in new[] { 1m, 2m, 3m, 7m, 10m, 15m, 50m, 100m, 1000m })
             {
                 decimal cps = ClickTiming.IntervalToCps(interval);
                 decimal back = ClickTiming.CpsToInterval(cps);
@@ -99,6 +101,50 @@ namespace RapidTap.Tests
         {
             Assert.Equal(0.0, ClickTiming.ComputeCps(10, 0));
             Assert.Equal(0.0, ClickTiming.ComputeCps(10, -1));
+        }
+
+        [Theory]
+        [InlineData(1.0)]
+        [InlineData(3.0)]
+        [InlineData(7.0)]
+        [InlineData(15.0)]
+        [InlineData(999.0)]
+        public void 两个方向的换算结果都是整数(double intervalMs)
+        {
+            // 界面上两个输入框都只显示整数，换算若带小数，显示的值和实际值就对不上
+            decimal cps = ClickTiming.IntervalToCps((decimal)intervalMs);
+            Assert.Equal(decimal.Truncate(cps), cps);
+            Assert.Equal(decimal.Truncate(ClickTiming.CpsToInterval(cps)), ClickTiming.CpsToInterval(cps));
+        }
+
+        [Theory]
+        [InlineData(7.5, 8.0)]
+        [InlineData(7.4, 7.0)]
+        [InlineData(0.1, 1.0)]
+        [InlineData(-3.0, 1.0)]
+        [InlineData(99999.0, 1000.0)]
+        public void RoundInterval_四舍五入到整数并夹进区间(double input, double expected)
+        {
+            Assert.Equal((decimal)expected, ClickTiming.RoundInterval((decimal)input));
+        }
+
+        [Theory]
+        [InlineData(66.7, 67.0)]
+        [InlineData(66.4, 66.0)]
+        [InlineData(0.2, 1.0)]
+        [InlineData(99999.0, 1000.0)]
+        public void RoundCps_四舍五入到整数并夹进区间(double input, double expected)
+        {
+            Assert.Equal((decimal)expected, ClickTiming.RoundCps((decimal)input));
+        }
+
+        [Fact]
+        public void AdjustStep_上下箭头一次走五()
+        {
+            Assert.Equal(5m, ClickTiming.AdjustStep);
+
+            // 10 毫秒按一下上箭头就是 15 毫秒
+            Assert.Equal(15m, ClickTiming.RoundInterval(10m + ClickTiming.AdjustStep));
         }
     }
 }

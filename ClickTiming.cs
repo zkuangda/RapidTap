@@ -8,11 +8,20 @@ namespace RapidTap
     /// </summary>
     internal static class ClickTiming
     {
-        /// <summary>间隔下限，再小下去 SendInput 本身的开销就成了瓶颈，调它也没有意义。</summary>
-        public const decimal MinIntervalMs = 0.1m;
+        /// <summary>
+        /// 间隔下限。界面上间隔与速度都按整数显示，1ms 就是整数能表达的最小一档；
+        /// 再小下去 SendInput 本身的开销就成了瓶颈，调它也没有意义。
+        /// </summary>
+        public const decimal MinIntervalMs = 1m;
 
         /// <summary>间隔上限，1 秒一次，比这更慢的场景手点就行了。</summary>
         public const decimal MaxIntervalMs = 1000m;
+
+        /// <summary>
+        /// 界面上两个数字框点一下上下箭头走的步数。1 这种步长要按半天才看得出差别，
+        /// 5 一档正好：10ms 按一下就是 15ms。
+        /// </summary>
+        public const decimal AdjustStep = 5m;
 
         /// <summary>
         /// 低于这个间隔就不能用 Thread.Sleep：即使开了 timeBeginPeriod(1)，
@@ -20,9 +29,9 @@ namespace RapidTap
         /// </summary>
         public const double SpinWaitThresholdMs = 2.0;
 
-        public static decimal MinCps => Math.Round(1000m / MaxIntervalMs, 1);
+        public static decimal MinCps => Math.Round(1000m / MaxIntervalMs, 0, MidpointRounding.AwayFromZero);
 
-        public static decimal MaxCps => Math.Round(1000m / MinIntervalMs, 1);
+        public static decimal MaxCps => Math.Round(1000m / MinIntervalMs, 0, MidpointRounding.AwayFromZero);
 
         /// <summary>
         /// 间隔以 0.1ms 为单位存成整数在线程间传递。
@@ -59,18 +68,34 @@ namespace RapidTap
             return cps > MaxCps ? MaxCps : cps;
         }
 
-        /// <summary>间隔（毫秒）换算成每秒点击次数，保留 1 位小数与界面输入框一致。</summary>
+        /// <summary>
+        /// 把任意来源的间隔（旧配置文件里可能存着 7.5）归整成界面能显示的整数毫秒。
+        /// 凡是要写回输入框的值都先过这一道，否则控件显示的是四舍五入后的整数、
+        /// 内部却还留着小数，存回配置时又原样写出去，对不上。
+        /// </summary>
+        public static decimal RoundInterval(decimal intervalMs)
+        {
+            return ClampInterval(Math.Round(intervalMs, 0, MidpointRounding.AwayFromZero));
+        }
+
+        /// <summary>同 <see cref="RoundInterval"/>，把速度归整成界面能显示的整数。</summary>
+        public static decimal RoundCps(decimal cps)
+        {
+            return ClampCps(Math.Round(cps, 0, MidpointRounding.AwayFromZero));
+        }
+
+        /// <summary>间隔（毫秒）换算成每秒点击次数，取整到个位与界面输入框一致。</summary>
         public static decimal IntervalToCps(decimal intervalMs)
         {
             decimal clamped = ClampInterval(intervalMs);
-            return ClampCps(Math.Round(1000m / clamped, 1, MidpointRounding.AwayFromZero));
+            return ClampCps(Math.Round(1000m / clamped, 0, MidpointRounding.AwayFromZero));
         }
 
-        /// <summary>每秒点击次数换算回间隔（毫秒）。</summary>
+        /// <summary>每秒点击次数换算回间隔（毫秒），同样取整到个位。</summary>
         public static decimal CpsToInterval(decimal cps)
         {
             decimal clamped = ClampCps(cps);
-            return ClampInterval(Math.Round(1000m / clamped, 1, MidpointRounding.AwayFromZero));
+            return ClampInterval(Math.Round(1000m / clamped, 0, MidpointRounding.AwayFromZero));
         }
 
         /// <summary>
